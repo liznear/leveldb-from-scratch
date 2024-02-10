@@ -37,3 +37,15 @@ one is more up-to-date, we need to be able to sort level-0 SStables. To
 do that, we assign a monotonically increasing `GEN` to each SSTable (
 just use `GEN` as the file name). SSTables having higher `GEN` values
 are more up-to-date.
+
+# Step 3: Persist MemTable when it's full
+
+In this step, we convert a full MemTable into a SSTable. The SSTable
+would be saved as a file on disk. Meanwhile, a new empty MemTable should
+be created to handle new inserts.
+
+As mentioned in step 2, we would assign a `GEN` to each SSTable as the
+file name. In this step, we need to implement this assignment. It can be
+easily done by maintaining a global counter in memory. The tricky part
+is what to do when the server restarts. In this case, we need to
+initialize the counter to one plus the max `GEN` in the file system.
