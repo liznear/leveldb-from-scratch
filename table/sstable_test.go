@@ -61,3 +61,42 @@ func TestSSTable_Write(t *testing.T) {
 		t.Errorf("Got meta length %d, want 0", footer.metaLength)
 	}
 }
+
+func TestSSTable_Get(t *testing.T) {
+	t.Parallel()
+	clean := EnterTempDir(t)
+	defer clean()
+
+	kvs := []model.KV{
+		{
+			Key:   model.NewKey("Key1"),
+			Value: model.NewValue([]byte("Value1")),
+		},
+	}
+	sstable, err := newSSTable(1, 0, kvs)
+	if err != nil {
+		t.Fatalf("Fail to create SSTable: %v", err)
+	}
+
+	got1, ok, err := sstable.get("Key1")
+	if err != nil {
+		t.Fatalf("Fail to get Key1: %v", err)
+	}
+	if !ok {
+		t.Fatal("Fail to found Key1")
+	}
+	if !reflect.DeepEqual(got1, []byte("Value1")) {
+		t.Errorf("Got %v, want %v", got1, []byte("Value1"))
+	}
+
+	got2, ok, err := sstable.get("Key2")
+	if err != nil {
+		t.Fatalf("Fail to get Key2: %v", err)
+	}
+	if ok {
+		t.Fatal("Found non-existing Key2")
+	}
+	if got2 != nil {
+		t.Errorf("Got %v, want nil", got2)
+	}
+}

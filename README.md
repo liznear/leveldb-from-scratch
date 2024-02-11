@@ -49,3 +49,9 @@ file name. In this step, we need to implement this assignment. It can be
 easily done by maintaining a global counter in memory. The tricky part
 is what to do when the server restarts. In this case, we need to
 initialize the counter to one plus the max `GEN` in the file system.
+
+# Step 4: Read SSTable (without any fancy optimization)
+
+This step is a simple sequential scan of the SSTable. No fancy stuff
+like index, bloom filter, etc. It has been done in tests of previous
+steps.
