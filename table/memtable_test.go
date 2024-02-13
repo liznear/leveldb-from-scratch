@@ -11,7 +11,7 @@ import (
 func TestMemTable_Persist(t *testing.T) {
 	defer EnterTempDir(t)()
 
-	mt := NewMemTable()
+	mt := NewMemTable(1 << 20)
 	mt.put("Key1", []byte("Value1"))
 	mt.put("Key2", []byte("Value2"))
 	mt.put("Key3", []byte("Value3"))
@@ -58,7 +58,7 @@ func TestMemTable_Persist(t *testing.T) {
 func TestMemTable_PersistDeletion(t *testing.T) {
 	defer EnterTempDir(t)()
 
-	mt := NewMemTable()
+	mt := NewMemTable(1 << 20)
 	mt.remove("Key1")
 	mt.put("Key2", []byte("Value2"))
 	mt.remove("Key2")
