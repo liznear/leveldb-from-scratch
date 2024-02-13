@@ -18,6 +18,7 @@ const SSTABLE_EXTENSION = ".sstable"
 type SSTable struct {
 	gen   Gen
 	level Level
+	scope *model.Scope
 }
 
 // newSSTable creates a new SSTable file with the given kvs. It returns the SSTable reference and the error.
@@ -25,6 +26,7 @@ func newSSTable(gen Gen, level Level, kvs []model.KV) (*SSTable, error) {
 	t := &SSTable{
 		gen:   gen,
 		level: level,
+		scope: model.NewScope(kvs[0].Key.Data, kvs[len(kvs)-1].Key.Data),
 	}
 	filename := t.filename()
 	if _, err := os.Stat(filename); err == nil {
@@ -45,6 +47,23 @@ func (t *SSTable) filename() string {
 	return fmt.Sprintf("%d%s", t.gen, SSTABLE_EXTENSION)
 }
 
+func (t *SSTable) kvs() ([]model.KV, error) {
+	r, err := t.load()
+	if err != nil {
+		return nil, fmt.Errorf("sstable: fail to open file %s: %w", t.filename(), err)
+	}
+	defer r.Close()
+	bytes, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("sstable: fail to load file %s: %w", t.filename(), err)
+	}
+	kvs, _, err := model.BatchFromBytes(bytes[:len(bytes)-FOOTER_SIZE])
+	if err != nil {
+		return nil, fmt.Errorf("sstable: fail to parse file %s: %w", t.filename(), err)
+	}
+	return kvs, nil
+}
+
 func (t *SSTable) load() (io.ReadSeekCloser, error) {
 	return os.Open(t.filename())
 }
@@ -57,16 +76,7 @@ func (t *SSTable) load() (io.ReadSeekCloser, error) {
 //   - We haven't built the index or metadata
 //   - We haven't built the bloom filter
 func (t *SSTable) get(key string) (value []byte, ok bool, err error) {
-	r, err := t.load()
-	if err != nil {
-		return nil, false, err
-	}
-	defer r.Close()
-	bytes, err := io.ReadAll(r)
-	if err != nil {
-		return nil, false, fmt.Errorf("sstable: fail to load file %s: %w", t.filename(), err)
-	}
-	kvs, _, err := model.BatchFromBytes(bytes[:len(bytes)-FOOTER_SIZE])
+	kvs, err := t.kvs()
 	if err != nil {
 		return nil, false, err
 	}

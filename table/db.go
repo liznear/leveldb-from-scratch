@@ -12,9 +12,12 @@ import (
 const MAX_LEVELS = 4
 
 type DB struct {
+	cfg     *Config
 	genIter *GenIter
 	mem     *MemTable
-	levels  [MAX_LEVELS]*treeset.Set[*SSTable]
+
+	rwLock sync.RWMutex
+	levels [MAX_LEVELS]*treeset.Set[*SSTable]
 
 	immutableMem atomic.Pointer[MemTable]
 	wg           sync.WaitGroup
@@ -23,14 +26,13 @@ type DB struct {
 }
 
 func NewDB(opts ...Option) *DB {
-	config := &Config{
-		MaxMemTableSize: DEFAULT_MAX_MEM_TABLE_SIZE,
-	}
+	config := defaultConfig()
 	for _, opt := range opts {
 		opt(config)
 	}
 
 	db := &DB{
+		cfg:       config,
 		genIter:   NewGenIter(),
 		mem:       NewMemTable(config.MaxMemTableSize),
 		toPersist: make(chan struct{}, 1),
@@ -66,7 +68,16 @@ func (db *DB) persistLoop() {
 			if err != nil {
 				log.Panicf("Fail to persist immutable memtable: %v", err)
 			}
-			db.levels[0].Add(st)
+
+			func() {
+				db.rwLock.Lock()
+				defer db.rwLock.Unlock()
+				db.levels[0].Add(st)
+			}()
+			err = db.compaction(st.scope)
+			if err != nil {
+				log.Panicf("Fail to compact: %v", err)
+			}
 			db.persisted <- struct{}{}
 			db.immutableMem.Store(nil)
 		}
@@ -77,9 +88,9 @@ func (db *DB) Put(key string, value []byte) error {
 	db.mem.put(key, value)
 	if db.mem.isFull() {
 		<-db.persisted
-		db.toPersist <- struct{}{}
 		db.immutableMem.Store(db.mem)
-		db.mem = NewMemTable(1 << 20)
+		db.toPersist <- struct{}{}
+		db.mem = NewMemTable(db.cfg.MaxMemTableSize)
 	}
 	return nil
 }
@@ -87,14 +98,17 @@ func (db *DB) Put(key string, value []byte) error {
 func (db *DB) Get(key string) ([]byte, bool, error) {
 	v, ok := db.mem.get(key)
 	if ok {
-		return v.Data, true, nil
+		return v, true, nil
 	}
 	if immuMem := db.immutableMem.Load(); immuMem != nil {
 		v, ok := immuMem.get(key)
 		if ok {
-			return v.Data, true, nil
+			return v, true, nil
 		}
 	}
+
+	db.rwLock.RLock()
+	defer db.rwLock.RUnlock()
 	for _, sts := range db.levels {
 		iter := sts.Iterator()
 		for iter.Next() {
@@ -116,10 +130,25 @@ func (db *DB) waitPersist() {
 	}
 }
 
-const DEFAULT_MAX_MEM_TABLE_SIZE = 1 << 20 // 1MB
-
 type Config struct {
-	MaxMemTableSize int
+	MaxMemTableSize    int
+	MaxSSTableSize     int
+	LevelSizeThreshold int
+	LevelSizeRatio     float64
+}
+
+func defaultConfig() *Config {
+	const defaultMaxMemTableSize = 1 << 20 // 1MB
+	const defaultSSTableSize = 1 << 20     // 1MB
+	const defaultLevelSizeThreshold = 100
+	const defaultLevelSizeRatio = 1.4
+
+	return &Config{
+		MaxMemTableSize:    defaultMaxMemTableSize,
+		MaxSSTableSize:     defaultSSTableSize,
+		LevelSizeThreshold: defaultLevelSizeThreshold,
+		LevelSizeRatio:     defaultLevelSizeRatio,
+	}
 }
 
 type Option func(*Config)
@@ -127,5 +156,18 @@ type Option func(*Config)
 func WithMaxMemTableSize(size int) Option {
 	return func(c *Config) {
 		c.MaxMemTableSize = size
+	}
+}
+
+func WithMaxSSTableSize(size int) Option {
+	return func(c *Config) {
+		c.MaxSSTableSize = size
+	}
+}
+
+func WithCompactionConfig(levelSizeThreshold int, levelSizeRatio float64) Option {
+	return func(c *Config) {
+		c.LevelSizeThreshold = levelSizeThreshold
+		c.LevelSizeRatio = levelSizeRatio
 	}
 }
