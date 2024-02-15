@@ -31,6 +31,10 @@ type KV struct {
 	Value Value
 }
 
+func SizeOnDisk(key string, value []byte) int {
+	return 4 + len(key) + 4 + len(value)
+}
+
 func (kv *KV) ToBytes() []byte {
 	ret := bytes.Buffer{}
 	_ = binary.Write(&ret, binary.BigEndian, uint32(len(kv.Key.Data)))

@@ -2,6 +2,7 @@ package table
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/emirpasic/gods/v2/maps/treemap"
@@ -28,7 +29,7 @@ func (t *MemTable) put(key string, value []byte) {
 	t.m.Lock()
 	defer t.m.Unlock()
 
-	t.size += 4 + len(key) + 4 + len(value)
+	t.size += model.SizeOnDisk(key, value)
 	t.data.Put(key, model.NewValue(value))
 }
 
@@ -66,4 +67,17 @@ func (t *MemTable) persist(gen Gen) (*SSTable, error) {
 		return nil, fmt.Errorf("memtable: fail to persist: %w", err)
 	}
 	return sstable, nil
+}
+
+func (t *MemTable) debug() string {
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	sb := strings.Builder{}
+	sb.WriteString("MemTable:\n")
+	iter := t.data.Iterator()
+	for iter.Next() {
+		sb.WriteString(fmt.Sprintf("\t%s: %s\n", iter.Key(), iter.Value()))
+	}
+	return sb.String()
 }

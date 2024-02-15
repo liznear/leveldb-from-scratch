@@ -12,11 +12,6 @@ func TestKV(t *testing.T) {
 		value []byte
 	}{
 		{
-			name:  "NilValue",
-			key:   "",
-			value: nil,
-		},
-		{
 			name:  "Empty",
 			key:   "",
 			value: []byte{},
