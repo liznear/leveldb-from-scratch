@@ -1,13 +1,12 @@
 package table
 
 import (
+	"os"
 	"sync"
 	"testing"
 )
 
 func TestGen_NextGen(t *testing.T) {
-	t.Parallel()
-
 	iter := NewGenIter()
 	g := iter.NextGen()
 	if g != 1 {
@@ -19,9 +18,22 @@ func TestGen_NextGen(t *testing.T) {
 	}
 }
 
-func TestGen_NextGenParallel(t *testing.T) {
-	t.Parallel()
+func TestGen_NextGen_NonEmpty(t *testing.T) {
+	defer EnterTempDir(t)()
 
+	_, err := os.Create("1" + SSTABLE_EXTENSION)
+	if err != nil {
+		t.Fatalf("Fail to create file: %v", err)
+	}
+
+	iter := NewGenIter()
+	g := iter.NextGen()
+	if g != 2 {
+		t.Errorf("Got gen %d, want 1", g)
+	}
+}
+
+func TestGen_NextGenParallel(t *testing.T) {
 	c := 100
 	v := make(chan int, c)
 	wg := sync.WaitGroup{}

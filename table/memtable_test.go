@@ -2,7 +2,6 @@ package table
 
 import (
 	"io"
-	"os"
 	"strconv"
 	"testing"
 
@@ -10,21 +9,13 @@ import (
 )
 
 func TestMemTable_Persist(t *testing.T) {
-	t.Parallel()
+	defer EnterTempDir(t)()
 
-	dir, err := os.MkdirTemp("", "leveldb")
-	if err != nil {
-		t.Fatalf("Fail to create temporary dir: %v", err)
-	}
-	defer os.RemoveAll(dir)
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("Fail to switch to temporary dir: %v", err)
-	}
 	mt := NewMemTable()
-	mt.put(*model.NewKey("Key1"), *model.NewValue([]byte("Value1")))
-	mt.put(*model.NewKey("Key2"), *model.NewValue([]byte("Value2")))
-	mt.put(*model.NewKey("Key3"), *model.NewValue([]byte("Value3")))
-	mt.put(*model.NewKey("Key4"), *model.NewValue([]byte("Value4")))
+	mt.put("Key1", []byte("Value1"))
+	mt.put("Key2", []byte("Value2"))
+	mt.put("Key3", []byte("Value3"))
+	mt.put("Key4", []byte("Value4"))
 	st, err := mt.persist(1)
 	if err != nil {
 		t.Fatal(err)

@@ -40,7 +40,7 @@ func TestKV(t *testing.T) {
 
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
+
 			kv := KV{
 				Key:   NewKey(tc.key),
 				Value: NewValue(tc.value),
@@ -64,7 +64,7 @@ func TestKV(t *testing.T) {
 }
 
 func TestKV_BatchFromBytes(t *testing.T) {
-	t.Parallel()
+
 	kvs := []KV{
 		{
 			Key:   NewKey("Key1"),
