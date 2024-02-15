@@ -49,6 +49,35 @@ func (t *SSTable) load() (io.ReadSeekCloser, error) {
 	return os.Open(t.filename())
 }
 
+// get returns the value of the key if exists.
+// If no value is found, ok would be false.
+//
+// TODO: it could be optimized
+//   - Since kvs are sorted, we can stop if the key is greater than the target key.
+//   - We haven't built the index or metadata
+//   - We haven't built the bloom filter
+func (t *SSTable) get(key string) (value []byte, ok bool, err error) {
+	r, err := t.load()
+	if err != nil {
+		return nil, false, err
+	}
+	defer r.Close()
+	bytes, err := io.ReadAll(r)
+	if err != nil {
+		return nil, false, fmt.Errorf("sstable: fail to load file %s: %w", t.filename(), err)
+	}
+	kvs, _, err := model.BatchFromBytes(bytes[:len(bytes)-FOOTER_SIZE])
+	if err != nil {
+		return nil, false, err
+	}
+	for _, kv := range kvs {
+		if kv.Key.Data == key {
+			return kv.Value.Data, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
 // writeSSTable writes the given kvs to the writer as an SSTable. kvs must be already sorted by keys.
 //
 // # The SSTable on disk looks like this
