@@ -1,9 +1,11 @@
 package model
 
-type Key struct {
-	data string
+type Value struct {
+	Data []byte
 }
 
-type Value struct {
-	data []byte
+func NewValue(value []byte) Value {
+	return Value{
+		Data: value,
+	}
 }
