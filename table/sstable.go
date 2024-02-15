@@ -4,12 +4,52 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/nearsyh/go-leveldb/model"
 )
 
-type Gen int
 type Level byte
+
+const SSTABLE_EXTENSION = ".sstable"
+
+var GLOBAL_GEN_ITER = NewGenIter()
+
+// SSTable is a reference to the actual SSTable file on disk.
+// It only includes the metadata of the SSTable.
+type SSTable struct {
+	gen   Gen
+	level Level
+}
+
+// newSSTable creates a new SSTable file with the given kvs. It returns the SSTable reference and the error.
+func newSSTable(level Level, kvs []model.KV) (*SSTable, error) {
+	t := &SSTable{
+		gen:   GLOBAL_GEN_ITER.NextGen(),
+		level: level,
+	}
+	filename := t.filename()
+	if _, err := os.Stat(filename); err == nil {
+		return nil, fmt.Errorf("sstable: file %s already exists", filename)
+	}
+	f, err := os.OpenFile(t.filename(), os.O_WRONLY|os.O_CREATE, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("sstable: fail to open file %s: %w", t.filename(), err)
+	}
+	defer f.Close()
+	if err := writeSSTable(f, t.level, kvs); err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+func (t *SSTable) filename() string {
+	return fmt.Sprintf("%d%s", t.gen, SSTABLE_EXTENSION)
+}
+
+func (t *SSTable) load() (io.ReadSeekCloser, error) {
+	return os.Open(t.filename())
+}
 
 // writeSSTable writes the given kvs to the writer as an SSTable. kvs must be already sorted by keys.
 //
