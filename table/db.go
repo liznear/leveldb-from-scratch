@@ -98,12 +98,12 @@ func (db *DB) Put(key string, value []byte) error {
 func (db *DB) Get(key string) ([]byte, bool, error) {
 	v, ok := db.mem.get(key)
 	if ok {
-		return v, true, nil
+		return v.Data, true, nil
 	}
 	if immuMem := db.immutableMem.Load(); immuMem != nil {
 		v, ok := immuMem.get(key)
 		if ok {
-			return v, true, nil
+			return v.Data, true, nil
 		}
 	}
 
@@ -117,7 +117,10 @@ func (db *DB) Get(key string) ([]byte, bool, error) {
 				return nil, false, err
 			}
 			if ok {
-				return v, true, nil
+				if v.Deleted {
+					return nil, false, nil
+				}
+				return v.Data, true, nil
 			}
 		}
 	}

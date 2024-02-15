@@ -75,17 +75,17 @@ func (t *SSTable) load() (io.ReadSeekCloser, error) {
 //   - Since kvs are sorted, we can stop if the key is greater than the target key.
 //   - We haven't built the index or metadata
 //   - We haven't built the bloom filter
-func (t *SSTable) get(key string) (value []byte, ok bool, err error) {
+func (t *SSTable) get(key string) (value model.Value, ok bool, err error) {
 	kvs, err := t.kvs()
 	if err != nil {
-		return nil, false, err
+		return model.Value{}, false, err
 	}
 	for _, kv := range kvs {
 		if kv.Key.Data == key {
-			return kv.Value.Data, true, nil
+			return kv.Value, true, nil
 		}
 	}
-	return nil, false, nil
+	return model.Value{}, false, nil
 }
 
 // writeSSTable writes the given kvs to the writer as an SSTable. kvs must be already sorted by keys.

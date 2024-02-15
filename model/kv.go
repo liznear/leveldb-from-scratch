@@ -40,6 +40,13 @@ func NewDeletedValue() Value {
 	}
 }
 
+func (v Value) String() string {
+	if v.Deleted {
+		return "DELETED"
+	}
+	return string(v.Data)
+}
+
 type KV struct {
 	Key   Key
 	Value Value
