@@ -10,8 +10,8 @@ type Key struct {
 	Data string
 }
 
-func NewKey(s string) *Key {
-	return &Key{
+func NewKey(s string) Key {
+	return Key{
 		Data: s,
 	}
 }

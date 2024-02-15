@@ -42,8 +42,8 @@ func TestKV(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			kv := KV{
-				Key:   *NewKey(tc.key),
-				Value: *NewValue(tc.value),
+				Key:   NewKey(tc.key),
+				Value: NewValue(tc.value),
 			}
 			bytes := kv.ToBytes()
 			got, end, err := FromBytes(bytes)
@@ -67,12 +67,12 @@ func TestKV_BatchFromBytes(t *testing.T) {
 	t.Parallel()
 	kvs := []KV{
 		{
-			Key:   *NewKey("Key1"),
-			Value: *NewValue([]byte("Value1")),
+			Key:   NewKey("Key1"),
+			Value: NewValue([]byte("Value1")),
 		},
 		{
-			Key:   *NewKey("Key2"),
-			Value: *NewValue([]byte("Value2")),
+			Key:   NewKey("Key2"),
+			Value: NewValue([]byte("Value2")),
 		},
 	}
 	var bs []byte
