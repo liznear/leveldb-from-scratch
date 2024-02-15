@@ -25,7 +25,7 @@ func TestMemTable_Persist(t *testing.T) {
 	mt.put(*model.NewKey("Key2"), *model.NewValue([]byte("Value2")))
 	mt.put(*model.NewKey("Key3"), *model.NewValue([]byte("Value3")))
 	mt.put(*model.NewKey("Key4"), *model.NewValue([]byte("Value4")))
-	st, err := mt.persist()
+	st, err := mt.persist(1)
 	if err != nil {
 		t.Fatal(err)
 	}

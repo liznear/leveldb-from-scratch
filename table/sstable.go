@@ -13,8 +13,6 @@ type Level byte
 
 const SSTABLE_EXTENSION = ".sstable"
 
-var GLOBAL_GEN_ITER = NewGenIter()
-
 // SSTable is a reference to the actual SSTable file on disk.
 // It only includes the metadata of the SSTable.
 type SSTable struct {
@@ -23,9 +21,9 @@ type SSTable struct {
 }
 
 // newSSTable creates a new SSTable file with the given kvs. It returns the SSTable reference and the error.
-func newSSTable(level Level, kvs []model.KV) (*SSTable, error) {
+func newSSTable(gen Gen, level Level, kvs []model.KV) (*SSTable, error) {
 	t := &SSTable{
-		gen:   GLOBAL_GEN_ITER.NextGen(),
+		gen:   gen,
 		level: level,
 	}
 	filename := t.filename()

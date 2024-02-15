@@ -42,7 +42,7 @@ func (t *MemTable) remove(key string) {
 	t.data.Remove(key)
 }
 
-func (t *MemTable) persist() (*SSTable, error) {
+func (t *MemTable) persist(gen Gen) (*SSTable, error) {
 	// When we start persisting a MemTable, there shouldn't be any new
 	// modifications to this, so we don't acquire a lock.
 	iter := t.data.Iterator()
@@ -53,7 +53,7 @@ func (t *MemTable) persist() (*SSTable, error) {
 			Value: iter.Value(),
 		})
 	}
-	sstable, err := newSSTable(0, kvs)
+	sstable, err := newSSTable(gen, 0, kvs)
 	if err != nil {
 		return nil, fmt.Errorf("memtable: fail to persist: %w", err)
 	}
