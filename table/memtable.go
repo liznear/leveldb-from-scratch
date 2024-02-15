@@ -12,12 +12,15 @@ import (
 type MemTable struct {
 	m sync.RWMutex
 
-	data *treemap.Map[string, model.Value]
+	size     int
+	capacity int
+	data     *treemap.Map[string, model.Value]
 }
 
-func NewMemTable() *MemTable {
+func NewMemTable(capacity int) *MemTable {
 	return &MemTable{
-		data: treemap.New[string, model.Value](),
+		capacity: capacity,
+		data:     treemap.New[string, model.Value](),
 	}
 }
 
@@ -25,6 +28,7 @@ func (t *MemTable) put(key string, value []byte) {
 	t.m.Lock()
 	defer t.m.Unlock()
 
+	t.size += 4 + len(key) + 4 + len(value)
 	t.data.Put(key, model.NewValue(value))
 }
 
@@ -40,6 +44,10 @@ func (t *MemTable) remove(key string) {
 	defer t.m.Unlock()
 
 	t.data.Remove(key)
+}
+
+func (t *MemTable) isFull() bool {
+	return t.size >= t.capacity
 }
 
 func (t *MemTable) persist(gen Gen) (*SSTable, error) {

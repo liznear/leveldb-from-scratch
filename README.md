@@ -55,3 +55,12 @@ initialize the counter to one plus the max `GEN` in the file system.
 This step is a simple sequential scan of the SSTable. No fancy stuff
 like index, bloom filter, etc. It has been done in tests of previous
 steps.
+
+# Step 5: Implement the top-level DB using MemTable and SSTable
+
+In this step, we create the top-level user facing DB using the MemTable
+and SSTable we've created. No compaction is done yet, which means we
+only have one MemTable and level-0 SSTables. The tricky part here is
+that when a MemTable is full and being persisted, the SSTable is not
+ready for read. We need to make sure this MemTable is also scanned while
+doing lookups.
