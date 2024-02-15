@@ -81,3 +81,5 @@ deleted. The KVs in these SSTables would be compacted (only keep the
 latest value for each key) and merged into new level-1 SSTables. After
 this is done, we check if level-1 has too many SSTables, and repeat the
 same step for level-1, level-2 ... until we handle all levels.
+
+# Step 7: Bloom Filter
