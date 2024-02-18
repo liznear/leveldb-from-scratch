@@ -11,6 +11,10 @@ func newScope(min, max string) *scope {
 	return &scope{min, max}
 }
 
+func (s *scope) contains(v string) bool {
+	return s.min <= v && v <= s.max
+}
+
 func fusion(scopes []*scope) *scope {
 	if len(scopes) == 0 {
 		return nil
@@ -36,5 +40,11 @@ func (s *scope) String() string {
 }
 
 func scopeEqual(s1, s2 *scope) bool {
+	if s1 == s2 {
+		return true
+	}
+	if s1 == nil || s2 == nil {
+		return false
+	}
 	return s1.min == s2.min && s1.max == s2.max
 }

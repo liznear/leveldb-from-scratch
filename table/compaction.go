@@ -24,16 +24,29 @@ import (
 // only the value in the sstable with the highest Gen would be kept.
 func (db *DB) compaction(scope *scope) error {
 	for level := 0; level+1 < maxLevels; level++ {
-		if float64(db.levels[level].Size()) <= float64(db.cfg.LevelSizeThreshold)*math.Pow(db.cfg.LevelSizeRatio, float64(level)) {
+		if float64(db.version.levels[level].Size()) <= float64(db.cfg.LevelSizeThreshold)*math.Pow(db.cfg.LevelSizeRatio, float64(level)) {
 			return nil
 		}
 
 		nextLevel := level + 1
-		tablesAtLevel, scopeAtLevel := sstablesInScope(db.levels[level], scope, level == 0)
+		if db.cfg.Debug {
+			iter := db.version.levels[level].Iterator()
+			for iter.Next() {
+				t := iter.Value()
+				fmt.Printf("Level %d, gen %d, scope: %s, p: %s, has overlap %v", level, t.gen, t.scope, scope, hasOverlap(t.scope, scope))
+			}
+		}
+		tablesAtLevel, scopeAtLevel := sstablesInScope(db.version.levels[level], scope, level == 0)
+		if db.cfg.Debug {
+			fmt.Printf("Level %d: scope: %s => %s\n", level, scope, scopeAtLevel)
+		}
 		if scopeAtLevel == nil {
 			return nil
 		}
-		tablesAtNextLevel, scopeAtNextLevel := sstablesInScope(db.levels[nextLevel], scopeAtLevel, false)
+		tablesAtNextLevel, scopeAtNextLevel := sstablesInScope(db.version.levels[nextLevel], scopeAtLevel, false)
+		if db.cfg.Debug {
+			fmt.Printf("Level %d: scope: %s => %s\n", nextLevel, scopeAtLevel, scopeAtNextLevel)
+		}
 
 		var allTables []*sstable
 		allTables = append(allTables, tablesAtLevel...)
@@ -62,19 +75,24 @@ func (db *DB) compaction(scope *scope) error {
 			}
 			newSSTables = append(newSSTables, st)
 		}
+
+		newVer, err := db.version.Apply(newSSTables, allTables, db.version.seq)
+		if db.cfg.Debug {
+			fmt.Printf("compaction: \n\t%s\n\t%s\n", db.version.debug(), newVer.debug())
+		}
+		if err != nil {
+			return fmt.Errorf("compaction: fail to write version log: %w", err)
+		}
+
 		func() {
 			db.rwlock.Lock()
 			defer db.rwlock.Unlock()
-
-			db.levels[level].Remove(tablesAtLevel...)
-			db.levels[nextLevel].Remove(tablesAtNextLevel...)
-			db.levels[nextLevel].Add(newSSTables...)
-
+			db.version = newVer
 		}()
 
 		go func(toDelete []*sstable) {
 			for _, st := range toDelete {
-				_ = os.Remove(st.filename())
+				_ = os.Remove(sstableFilename(st.gen))
 			}
 		}(allTables)
 
@@ -151,7 +169,7 @@ func mergeKVs(sts []*sstable) ([]*kv, error) {
 	for _, st := range sts {
 		kvs, err := st.kvs()
 		if err != nil {
-			return nil, fmt.Errorf("compaction: fail to get kvs of sstable %q: %w", st.filename(), err)
+			return nil, fmt.Errorf("compaction: fail to get kvs of sstable %q: %w", sstableFilename(st.gen), err)
 		}
 		for _, kv := range kvs {
 			kv := kv

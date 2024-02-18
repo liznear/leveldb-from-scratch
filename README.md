@@ -60,3 +60,21 @@ The KVs in these SSTables would be compacted (only keep the latest value
 for each key) and merged into new level-1 SSTables. After this is done,
 we check if level-1 has too many SSTables, and repeat the same step for
 level-1, level-2 ... until we handle all levels.
+
+# Step 7: WAL
+
+We should have a working DB now, but it is not crash safe. If the server
+crash, all data in MemTable are lost. To support crash recovery, the
+common solution is using write-ahead logs (a.k.a. WAL). The idea is
+simple, before updating the MemTable, we persist the data into the
+WAL first. Since the WAL is a file on disk, if the server crash, we can
+always rebuild the MemTable from the WAL.
+
+One thing to note is that we don't put all WAL data into MemTable. For
+KVs already written into SSTables, we shouldn't put them into MemTable
+again. Otherwise, we will have duplicated data (won't affect
+correctness, but make the recovery slower and use more storage). To tell
+which KVs have been written into SSTables, we can also record the
+creating SSTable operation into the WAL. All KVs before the operation
+should be in the SSTables. Recording this also helps recover compactions
+if server crashes.

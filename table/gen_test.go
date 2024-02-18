@@ -6,7 +6,7 @@ import (
 )
 
 func TestGen_NextGen(t *testing.T) {
-	iter := NewGenIter(0)
+	iter := NewGenIter(1)
 	g := iter.NextGen()
 	if g != 1 {
 		t.Errorf("Got gen %d, want 1", g)
@@ -21,7 +21,7 @@ func TestGen_NextGenParallel(t *testing.T) {
 	c := 100
 	v := make(chan int, c)
 	wg := sync.WaitGroup{}
-	iter := NewGenIter(0)
+	iter := NewGenIter(1)
 	for i := 0; i < c; i++ {
 		wg.Add(1)
 		go func() {

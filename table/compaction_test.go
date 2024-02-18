@@ -14,10 +14,13 @@ func TestCompaction(t *testing.T) {
 		t.Fatalf("Fail to get current working dir: %v", err)
 	}
 
-	db := NewDB(
+	db, err := NewDB(
 		WithMaxMemTableSize(20),
 		WithMaxSSTableSize(20),
 		WithCompactionConfig(1, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	seq := [][]string{
 		// Not exceeding MemTable size limit.
@@ -54,7 +57,7 @@ func TestCompaction(t *testing.T) {
 	for i, want := range seq {
 		_ = db.Put("Key", []byte(fmt.Sprintf("Value%d", i%2)))
 		db.waitPersist()
-		verifyFiles(t, cwd, want)
+		verifyFiles(t, cwd, sstableExtension, want)
 	}
 
 	db.Close()

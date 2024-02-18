@@ -74,14 +74,14 @@ func TestScope_HasOverlap(t *testing.T) {
 	}{
 		{
 			name: "HaveOverlap",
-			s1:   newScope("a", "c"),
-			s2:   newScope("b", "d"),
+			s1:   newScope("Key0", "Key4"),
+			s2:   newScope("Key2", "Key3"),
 			want: true,
 		},
 		{
 			name: "NoOverlap",
-			s1:   newScope("a", "c"),
-			s2:   newScope("e", "g"),
+			s1:   newScope("Key0", "Key1"),
+			s2:   newScope("Key2", "Key3"),
 			want: false,
 		},
 	}

@@ -1,27 +1,32 @@
 package table
 
 import (
+	"errors"
 	"fmt"
 	"log"
+	"os"
+	"path"
+	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/emirpasic/gods/v2/sets/treeset"
 )
 
 const maxLevels = 4
 
 type DB struct {
 	cfg     *Config
+	seqIter *SeqIter
 	genIter *GenIter
-	levels  [maxLevels]*treeset.Set[*sstable]
-	mem     *MemTable
 
-	// Protects mem & levels
+	// Protects mem & version
 	// This is only needed for now. Once we support MVCC, we can remove this lock.
-	rwlock sync.RWMutex
+	rwlock  sync.RWMutex
+	mem     *MemTable
+	version version
 
 	prevMem   atomic.Pointer[MemTable]
 	wg        sync.WaitGroup
@@ -29,37 +34,145 @@ type DB struct {
 	persisted chan struct{}
 }
 
-func NewDB(opts ...Option) *DB {
+// NewDB creates a DB instance with the given options.
+//
+// It is possible that there are already data in the folder. In this case, we need to recover the data.
+func NewDB(opts ...Option) (*DB, error) {
 	config := defaultConfig()
 	for _, opt := range opts {
 		opt(config)
 	}
 
+	// load the latest version from the version WAL file if there is any.
+	version, err := loadLatestVersion()
+	if err != nil {
+		return nil, fmt.Errorf("fail to recovery from latest version: %w", err)
+	}
+	if config.Debug {
+		fmt.Println(version.debug())
+	}
+	maxGen := version.MaxGen()
+	genIter := NewGenIter(maxGen + 1)
+
+	// load all un-persisted KVs from last crash.
+	kvs, seqs, err := loadKVsFromWAL(version.seq)
+	seqIter := NewSeqIter()
+	mem, err := NewMemTable(seqIter.NextSeq(), config.MaxMemTableSize)
+	if err != nil {
+		return nil, err
+	}
+
 	db := &DB{
 		cfg:       config,
-		genIter:   NewGenIter(0),
-		mem:       NewMemTable(config.MaxMemTableSize),
+		seqIter:   seqIter,
+		genIter:   genIter,
+		mem:       mem,
+		version:   version,
 		toPersist: make(chan struct{}, 1),
 		persisted: make(chan struct{}, 1),
 	}
-	for i := range db.levels {
-		db.levels[i] = treeset.NewWith[*sstable](func(a, b *sstable) int {
-			return int(b.gen - a.gen)
-		})
-	}
 	db.wg.Add(1)
 	go db.loop()
-	return db
+
+	// Reprocess all un-persisted KVs.
+	for k, v := range kvs {
+		var err error
+		if v.deleted {
+			err = db.mem.remove(k)
+		} else {
+			err = db.mem.put(k, v.data)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("fail to recover from WAL: %w", err)
+		}
+	}
+	// All loaded KVs are re-processed. It is safe to remove old WAL files now.
+	// If server crashes again, data can still be recovered from the new WAL files.
+	for _, seq := range seqs {
+		_ = os.Remove(kvLogFile(seq))
+	}
+	return db, nil
 }
 
 // Close stops the DB and wait for any in-process work to complete before returning.
-func (db *DB) Close() {
+func (db *DB) Close() error {
+	err := db.mem.wal.Close()
+	if err != nil {
+		return err
+	}
 	// Close the toPersist channel so that the loop know it can stop after handling the current
 	// in progress one if there is any.
 	close(db.toPersist)
 
 	// Wait until the loop finish.
 	db.wg.Wait()
+	return nil
+}
+
+// loadKVsFromWAL would load all KVs from the KV WAL files that have a sequence number higher than the given seq.
+//
+// This function is called after we rebuild the latest version from the version WAL file. All KV WAL files with sequence
+// numbers higher than the version's sequence number are inserted, but not included in the version. We need to re-insert
+// these KVs into the DB.
+func loadKVsFromWAL(since Seq) (map[string]value, []Seq, error) {
+	wals, err := filepath.Glob("./*" + walExtension)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var seqs []Seq
+	for _, wal := range wals {
+		base := path.Base(wal)
+		if base == versionLogFile() {
+			continue
+		}
+		seq, err := strconv.ParseInt(strings.TrimSuffix(base, walExtension), 10, 64)
+		if err != nil {
+			log.Printf("fail to parse wal %q: %v\n", wal, err)
+		}
+
+		// Here, we include all KV WALs no matter if its seq is higher than since. We would skip those with lower
+		// seqs below. Here, we collect all seqs because we need to remove all these WAL files after we re-insert
+		// the KVs.
+		seqs = append(seqs, Seq(seq))
+
+	}
+	sort.Slice(seqs, func(i, j int) bool {
+		return seqs[i] < seqs[j]
+	})
+
+	// The same key may appear multiple times in the WAL files. We only need to re-insert the latest value for each
+	// key. So we use a map here.
+	kvs := make(map[string]value)
+loadKVs:
+	for _, seq := range seqs {
+		if seq <= since {
+			continue
+		}
+		logIter, err := newKVLogIter(seq)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				break loadKVs
+			}
+			return nil, nil, err
+		}
+		for logIter.Next() {
+			kvLog := &kvLog{}
+			if err := logIter.Read(kvLog); err != nil {
+				// If a log WAL is incomplete, we just stop.
+				// We don't need to truncate the WAL file since the file would be deleted.
+				// These KVs would be re-processed in the current recovery, and thus written to new WAL files.
+				ierr := &incompleteLogError{}
+				if errors.As(err, &ierr) {
+					break loadKVs
+				}
+				return nil, nil, err
+			}
+			kvs[kvLog.kv.key.data] = kvLog.kv.value
+		}
+	}
+	// We can't delete the WAL files yet. If we delete them and the server crash again, the data is lost.
+	return kvs, seqs, err
 }
 
 // loop would keep reading from the toPersist channel. Once receiving an item from the channel, it should persist
@@ -75,16 +188,28 @@ func (db *DB) loop() {
 			if !ok {
 				return
 			}
-			st, err := db.prevMem.Load().persist(db.genIter.NextGen())
+
+			prevMem := db.prevMem.Load()
+			st, err := prevMem.persist(db.genIter.NextGen())
 			if err != nil {
 				log.Panicf("Fail to persist immutable memtable: %v", err)
 			}
 
+			newVer, err := db.version.Apply([]*sstable{st}, nil, prevMem.seq)
+			if err != nil {
+				log.Panicf("Fail to apply version: %v", err)
+			}
+			// It is safe to remove the KV WAL file since the version change has been persisted in version WAL.
+			//
+			// If we fail to remove an old KV WAL file, its data won't be re-processed during recovering since
+			// in the version WAL, we store a seq. Only KV WAL files with higher seq value would be re-processed.
+			_ = os.Remove(kvLogFile(prevMem.seq))
 			func() {
 				db.rwlock.Lock()
 				defer db.rwlock.Unlock()
-				db.levels[0].Add(st)
+				db.version = newVer
 			}()
+
 			err = db.compaction(st.scope)
 			if err != nil {
 				log.Panicf("Fail to compact: %v", err)
@@ -96,26 +221,30 @@ func (db *DB) loop() {
 }
 
 func (db *DB) Put(key string, value []byte) error {
-	func() {
+	if err := func() error {
 		// Acquire read lock while putting data into db.mem.
 		// Since db.mem is thread-safe itself, callers can concurrently call Put/Remove.
 		db.rwlock.RLock()
 		defer db.rwlock.RUnlock()
 
-		db.mem.put(key, value)
-	}()
+		return db.mem.put(key, value)
+	}(); err != nil {
+		return err
+	}
 	return db.postWrite()
 }
 
 func (db *DB) Remove(key string) error {
-	func() {
+	if err := func() error {
 		// Acquire read lock while removing data from db.mem.
 		// Since db.mem is thread-safe itself, callers can concurrently call Put/Remove.
 		db.rwlock.RLock()
 		defer db.rwlock.RUnlock()
 
-		db.mem.remove(key)
-	}()
+		return db.mem.remove(key)
+	}(); err != nil {
+		return err
+	}
 	return db.postWrite()
 }
 
@@ -131,7 +260,11 @@ func (db *DB) postWrite() error {
 		// We need to make sure that when we swap, no one can call Put/Remove
 		db.rwlock.Lock()
 		defer db.rwlock.Unlock()
-		db.mem = NewMemTable(db.cfg.MaxMemTableSize)
+		mem, err := NewMemTable(db.seqIter.NextSeq(), db.cfg.MaxMemTableSize)
+		if err != nil {
+			return err
+		}
+		db.mem = mem
 	}
 	return nil
 }
@@ -165,7 +298,7 @@ func (db *DB) Get(key string) ([]byte, bool, error) {
 		}
 	}
 
-	for _, sts := range db.levels {
+	for _, sts := range db.version.levels {
 		iter := sts.Iterator()
 		for iter.Next() {
 			v, ok, err := iter.Value().get(key)
@@ -185,6 +318,7 @@ type Config struct {
 	MaxSSTableSize     int
 	LevelSizeThreshold int
 	LevelSizeRatio     float64
+	Debug              bool
 }
 
 func defaultConfig() *Config {
@@ -229,7 +363,7 @@ func (db *DB) debug() string {
 
 	sb := strings.Builder{}
 	sb.WriteString(db.mem.debug())
-	for lvl, sts := range db.levels {
+	for lvl, sts := range db.version.levels {
 		sb.WriteString(fmt.Sprintf("Level %d:\n", lvl))
 		iter := sts.Iterator()
 		for iter.Next() {
@@ -242,4 +376,10 @@ func (db *DB) debug() string {
 		}
 	}
 	return sb.String()
+}
+
+func WithDebug() Option {
+	return func(c *Config) {
+		c.Debug = true
+	}
 }

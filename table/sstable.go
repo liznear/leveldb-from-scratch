@@ -32,13 +32,13 @@ func newSSTable(gen Gen, level Level, kvs []kv) (*sstable, error) {
 		level: level,
 		scope: newScope(kvs[0].key.data, kvs[len(kvs)-1].key.data),
 	}
-	filename := t.filename()
+	filename := sstableFilename(gen)
 	if _, err := os.Stat(filename); err == nil {
 		return nil, fmt.Errorf("sstable: file %s already exists", filename)
 	}
 	f, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
-		return nil, fmt.Errorf("sstable: fail to open file %s: %w", t.filename(), err)
+		return nil, fmt.Errorf("sstable: fail to open file %s: %w", filename, err)
 	}
 	defer f.Close()
 	if err := write(f, t.level, kvs); err != nil {
@@ -47,12 +47,49 @@ func newSSTable(gen Gen, level Level, kvs []kv) (*sstable, error) {
 	return t, nil
 }
 
-func (t *sstable) filename() string {
-	return fmt.Sprintf("%d%s", t.gen, sstableExtension)
+func (t *sstable) load() (io.ReadSeekCloser, error) {
+	return os.Open(sstableFilename(t.gen))
 }
 
-func (t *sstable) load() (io.ReadSeekCloser, error) {
-	return os.Open(t.filename())
+// loadSSTable loads an existing SSTable file.
+func loadSSTable(gen Gen) (*sstable, error) {
+	file, err := os.Open(sstableFilename(gen))
+	if err != nil {
+		return nil, fmt.Errorf("sstable[%d]: fail to open: %w", gen, err)
+	}
+	defer file.Close()
+
+	footer := &footer{}
+	if err := loadFooter(file, footer); err != nil {
+		return nil, fmt.Errorf("sstable[%d]: %w", gen, err)
+	}
+
+	metadata := &Metadata{}
+	if err := loadMetadata(file, metadata, footer); err != nil {
+		return nil, fmt.Errorf("sstable[%d]: %w", gen, err)
+	}
+
+	return &sstable{
+		gen:   gen,
+		level: footer.level,
+		scope: newScope(metadata.min, metadata.max),
+	}, nil
+}
+
+func sstableFilename(gen Gen) string {
+	return fmt.Sprintf("%d%s", gen, sstableExtension)
+}
+
+func (t *sstable) footer() (*footer, error) {
+	r, err := t.load()
+	if err != nil {
+		return nil, fmt.Errorf("sstable: fail to open file %s: %w", sstableFilename(t.gen), err)
+	}
+	footer := &footer{}
+	if err := loadFooter(r, footer); err != nil {
+		return nil, fmt.Errorf("sstable: fail to load footer from %s: %w", sstableFilename(t.gen), err)
+	}
+	return footer, nil
 }
 
 func (t *sstable) kvs() ([]kv, error) {
@@ -89,6 +126,9 @@ func (t *sstable) kvs() ([]kv, error) {
 //   - We haven't built the bloom filter
 //   - We can cache the data in memory
 func (t *sstable) get(key string) (v value, ok bool, err error) {
+	if !t.scope.contains(key) {
+		return value{}, false, nil
+	}
 	kvs, err := t.kvs()
 	if err != nil {
 		return value{}, false, fmt.Errorf("sstable: fail to read kvs: %w", err)
@@ -111,9 +151,11 @@ func (t *sstable) get(key string) (v value, ok bool, err error) {
 // | value1 length (4 bytes big endian uint) | value1  |
 // | key2 length ...                         |
 //
-// - index block (TODO)
+// - index block
 //
-// - metadata block (TODO)
+// - metadata block
+// | min key length (4 bytes big endian uint) | min key value |
+// | max key length (4 bytes big endian uint) | max key value |
 //
 // - footer block (has fixed size)
 // | level           (1 byte uint) |
@@ -136,11 +178,55 @@ func write(w io.Writer, lvl Level, kvs []kv) error {
 		}
 		dataLen += uint32(n)
 	}
-	f := footer{lvl, dataLen, 0, dataLen, 0}
+
+	m := Metadata{min: kvs[0].key.data, max: kvs[len(kvs)-1].key.data}
+	metadataLen, err := m.write(w)
+	if err != nil {
+		return fmt.Errorf("sstable: fail to write metadata: %w", err)
+	}
+
+	f := footer{lvl, dataLen, 0, dataLen, uint32(metadataLen)}
 	if _, err := f.write(w); err != nil {
 		return fmt.Errorf("sstable: fail to write footer: %w", err)
 	}
 	return nil
+}
+
+type Metadata struct {
+	min string
+	max string
+}
+
+// toBytes encode the Metadata into bytes.
+func (m *Metadata) write(w io.Writer) (int, error) {
+	l, err := utils.WriteWithUint32Length(w, []byte(m.min))
+	if err != nil {
+		return l, err
+	}
+
+	n, err := utils.WriteWithUint32Length(w, []byte(m.max))
+	return l + n, err
+}
+
+func (m *Metadata) read(r io.Reader) error {
+	min, err := utils.ReadWithUint32Length(r)
+	if err != nil {
+		return err
+	}
+	max, err := utils.ReadWithUint32Length(r)
+	if err != nil {
+		return err
+	}
+	m.min = string(min)
+	m.max = string(max)
+	return nil
+}
+
+func loadMetadata(rs io.ReadSeeker, m *Metadata, footer *footer) error {
+	if _, err := rs.Seek(int64(footer.metaOffset), io.SeekStart); err != nil {
+		return fmt.Errorf("fail to load metadata: %w", err)
+	}
+	return m.read(rs)
 }
 
 // footerSize is the size of footer block on disk.
@@ -191,4 +277,11 @@ func (f *footer) read(r io.Reader) error {
 		utils.ToRunnable3(binary.Read, r, binary.ByteOrder(binary.BigEndian), any(&f.metaOffset)),
 		utils.ToRunnable3(binary.Read, r, binary.ByteOrder(binary.BigEndian), any(&f.metaLength)),
 	)
+}
+
+func loadFooter(rs io.ReadSeeker, footer *footer) error {
+	if _, err := rs.Seek(-footerSize, io.SeekEnd); err != nil {
+		return fmt.Errorf("fail to load footer: %w", err)
+	}
+	return footer.read(rs)
 }
