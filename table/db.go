@@ -1,9 +1,12 @@
 package table
 
 import (
+	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/emirpasic/gods/v2/sets/treeset"
 )
@@ -11,6 +14,7 @@ import (
 const maxLevels = 4
 
 type DB struct {
+	cfg     *Config
 	genIter *GenIter
 	levels  [maxLevels]*treeset.Set[*sstable]
 	mem     *MemTable
@@ -26,14 +30,13 @@ type DB struct {
 }
 
 func NewDB(opts ...Option) *DB {
-	config := &Config{
-		MaxMemTableSize: defaultMaxMemTableSize,
-	}
+	config := defaultConfig()
 	for _, opt := range opts {
 		opt(config)
 	}
 
 	db := &DB{
+		cfg:       config,
 		genIter:   NewGenIter(0),
 		mem:       NewMemTable(config.MaxMemTableSize),
 		toPersist: make(chan struct{}, 1),
@@ -41,7 +44,7 @@ func NewDB(opts ...Option) *DB {
 	}
 	for i := range db.levels {
 		db.levels[i] = treeset.NewWith[*sstable](func(a, b *sstable) int {
-			return int(a.gen - b.gen)
+			return int(b.gen - a.gen)
 		})
 	}
 	db.wg.Add(1)
@@ -76,7 +79,16 @@ func (db *DB) loop() {
 			if err != nil {
 				log.Panicf("Fail to persist immutable memtable: %v", err)
 			}
-			db.levels[0].Add(st)
+
+			func() {
+				db.rwlock.Lock()
+				defer db.rwlock.Unlock()
+				db.levels[0].Add(st)
+			}()
+			err = db.compaction(st.scope)
+			if err != nil {
+				log.Panicf("Fail to compact: %v", err)
+			}
 			db.persisted <- struct{}{}
 			db.prevMem.Store(nil)
 		}
@@ -112,14 +124,14 @@ func (db *DB) Remove(key string) error {
 func (db *DB) postWrite() error {
 	if db.mem.isFull() {
 		<-db.persisted
+		db.prevMem.Store(db.mem)
 		db.toPersist <- struct{}{}
 
 		// Acquire write lock while doing the swap.
 		// We need to make sure that when we swap, no one can call Put/Remove
 		db.rwlock.Lock()
 		defer db.rwlock.Unlock()
-		db.prevMem.Store(db.mem)
-		db.mem = NewMemTable(1 << 20)
+		db.mem = NewMemTable(db.cfg.MaxMemTableSize)
 	}
 	return nil
 }
@@ -168,10 +180,25 @@ func (db *DB) Get(key string) ([]byte, bool, error) {
 	return nil, false, nil
 }
 
-const defaultMaxMemTableSize = 1 << 20 // 1MB
-
 type Config struct {
-	MaxMemTableSize int
+	MaxMemTableSize    int
+	MaxSSTableSize     int
+	LevelSizeThreshold int
+	LevelSizeRatio     float64
+}
+
+func defaultConfig() *Config {
+	const defaultMaxMemTableSize = 1 << 20 // 1MB
+	const defaultSSTableSize = 1 << 20     // 1MB
+	const defaultLevelSizeThreshold = 100
+	const defaultLevelSizeRatio = 1.4
+
+	return &Config{
+		MaxMemTableSize:    defaultMaxMemTableSize,
+		MaxSSTableSize:     defaultSSTableSize,
+		LevelSizeThreshold: defaultLevelSizeThreshold,
+		LevelSizeRatio:     defaultLevelSizeRatio,
+	}
 }
 
 type Option func(*Config)
@@ -180,4 +207,39 @@ func WithMaxMemTableSize(size int) Option {
 	return func(c *Config) {
 		c.MaxMemTableSize = size
 	}
+}
+
+func WithMaxSSTableSize(size int) Option {
+	return func(c *Config) {
+		c.MaxSSTableSize = size
+	}
+}
+
+func WithCompactionConfig(levelSizeThreshold int, levelSizeRatio float64) Option {
+	return func(c *Config) {
+		c.LevelSizeThreshold = levelSizeThreshold
+		c.LevelSizeRatio = levelSizeRatio
+	}
+}
+
+func (db *DB) debug() string {
+	for db.prevMem.Load() != nil {
+		time.Sleep(1 * time.Second)
+	}
+
+	sb := strings.Builder{}
+	sb.WriteString(db.mem.debug())
+	for lvl, sts := range db.levels {
+		sb.WriteString(fmt.Sprintf("Level %d:\n", lvl))
+		iter := sts.Iterator()
+		for iter.Next() {
+			st := iter.Value()
+			sb.WriteString(fmt.Sprintf("\t%d, %s\n", st.gen, st.scope))
+			kvs, _ := st.kvs()
+			for _, kv := range kvs {
+				sb.WriteString(fmt.Sprintf("\t\t%s\n", &kv))
+			}
+		}
+	}
+	return sb.String()
 }

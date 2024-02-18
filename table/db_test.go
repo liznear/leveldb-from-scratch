@@ -65,19 +65,28 @@ func TestDB_Get(t *testing.T) {
 func TestDB_Overwrite(t *testing.T) {
 	defer EnterTempDir(t)()
 
-	db := NewDB(WithMaxMemTableSize(30))
+	db := NewDB(
+		WithMaxMemTableSize(20),
+		WithMaxSSTableSize(20),
+		WithCompactionConfig(1, 1))
 	defer db.Close()
-	for i := 0; i < 100; i++ {
+
+	c := 100
+	for i := 0; i < c; i++ {
 		if err := db.Put(fmt.Sprintf("Key%d", i), []byte(fmt.Sprintf("Value%d", i))); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for i := 0; i < 100; i++ {
+	db.waitPersist()
+
+	for i := 0; i < c; i++ {
 		if err := db.Put(fmt.Sprintf("Key%d", i), []byte(fmt.Sprintf("Value%d", i+1))); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for i := 0; i < 100; i++ {
+	db.waitPersist()
+
+	for i := 0; i < c; i++ {
 		v, ok, err := db.Get(fmt.Sprintf("Key%d", i))
 		if err != nil {
 			t.Fatal(err)
@@ -85,7 +94,7 @@ func TestDB_Overwrite(t *testing.T) {
 		if !ok {
 			t.Errorf("Key%d not found", i)
 		} else if string(v) != fmt.Sprintf("Value%d", i+1) {
-			t.Errorf("Got %q, want Value%d", v, i)
+			t.Errorf("Got %q, want Value%d", v, i+1)
 		}
 	}
 }
@@ -95,22 +104,25 @@ func TestDB_Delete(t *testing.T) {
 
 	db := NewDB(WithMaxMemTableSize(30))
 	defer db.Close()
-	for i := 0; i < 100; i++ {
+
+	c := 100
+	for i := 0; i < c; i++ {
 		if err := db.Put(fmt.Sprintf("Key%d", i), []byte(fmt.Sprintf("Value%d", i))); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for i := 0; i < 100; i++ {
+	for i := 0; i < c; i++ {
 		if err := db.Put(fmt.Sprintf("Key%d", i), []byte(fmt.Sprintf("Value%d", i+1))); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for i := 0; i < 100; i++ {
+	for i := 0; i < c; i++ {
 		if err := db.Remove(fmt.Sprintf("Key%d", i)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for i := 0; i < 100; i++ {
+	fmt.Println(db.debug())
+	for i := 0; i < c; i++ {
 		_, ok, err := db.Get(fmt.Sprintf("Key%d", i))
 		if err != nil {
 			t.Fatal(err)
@@ -135,6 +147,10 @@ func verifyFiles(t *testing.T, cwd string, want []string) {
 	}
 	if len(fs) != len(want) {
 		t.Errorf("Got %d files, want %d", len(fs), len(want))
+	}
+
+	if len(fs) == 0 {
+		return
 	}
 
 	var got []string

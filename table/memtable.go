@@ -33,7 +33,7 @@ func (t *MemTable) put(key string, value []byte) {
 	defer t.m.Unlock()
 
 	t.data.Put(newKey(key), newValue(value))
-	t.size += 4 + len(key) + 4 + len(value)
+	t.size += sizeOnDisk(key, value)
 }
 
 // get returns the value associated with the key, and also a found boolean.
@@ -56,6 +56,7 @@ func (t *MemTable) remove(key string) {
 	defer t.m.Unlock()
 
 	t.data.Put(newKey(key), newDeletedValue())
+	t.size += sizeOnDisk(key, nil)
 }
 
 func (t *MemTable) isFull() bool {
@@ -79,4 +80,17 @@ func (t *MemTable) persist(gen Gen) (*sstable, error) {
 		return nil, fmt.Errorf("memtable: fail to persist: %w", err)
 	}
 	return st, nil
+}
+
+func (t *MemTable) debug() string {
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	sb := strings.Builder{}
+	sb.WriteString("MemTable:\n")
+	iter := t.data.Iterator()
+	for iter.Next() {
+		sb.WriteString(fmt.Sprintf("\t%q: %s\n", iter.Key(), iter.Value()))
+	}
+	return sb.String()
 }

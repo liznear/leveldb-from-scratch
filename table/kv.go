@@ -26,6 +26,10 @@ func newKey(s string) key {
 	}
 }
 
+func (k *key) String() string {
+	return k.data
+}
+
 // value represents a stored value in the table.
 //
 // If a key is deleted, we store a special value to indicate that the key is deleted. Otherwise, we may miss
@@ -47,6 +51,13 @@ func newDeletedValue() value {
 	return value{
 		deleted: true,
 	}
+}
+
+func (v value) String() string {
+	if v.deleted {
+		return "[deleted]"
+	}
+	return fmt.Sprintf("%v", v.data)
 }
 
 type kv struct {
@@ -122,6 +133,10 @@ func (kv *kv) read(r io.Reader) error {
 	return nil
 }
 
+func sizeOnDisk(k string, v []byte) int {
+	return 8 + len(k) + len(v)
+}
+
 // readKVs reads a list of kvs from r until it reaches the end.
 func readKVs(r io.Reader) ([]kv, error) {
 	var ret []kv
@@ -140,10 +155,7 @@ func readKVs(r io.Reader) ([]kv, error) {
 }
 
 func (kv *kv) String() string {
-	if kv.value.deleted {
-		return fmt.Sprintf("%s:deleted", kv.key.data)
-	}
-	return fmt.Sprintf("%s:%v", kv.key.data, kv.value.data)
+	return fmt.Sprintf("%s:%s", &kv.key, &kv.value)
 }
 
 func kvEqual(kv1, kv2 *kv) bool {

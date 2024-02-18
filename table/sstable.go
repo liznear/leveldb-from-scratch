@@ -21,6 +21,7 @@ const sstableExtension = ".sstable"
 type sstable struct {
 	gen   Gen
 	level Level
+	scope *scope
 }
 
 // newSSTable creates a new SSTable file with the given kvs. It returns the SSTable
@@ -29,6 +30,7 @@ func newSSTable(gen Gen, level Level, kvs []kv) (*sstable, error) {
 	t := &sstable{
 		gen:   gen,
 		level: level,
+		scope: newScope(kvs[0].key.data, kvs[len(kvs)-1].key.data),
 	}
 	filename := t.filename()
 	if _, err := os.Stat(filename); err == nil {

@@ -43,3 +43,20 @@ level-0 SSTables in this step. Compaction won't be included. The tricky
 part here is that when a MemTable is full and being persisted, the
 SSTable is not ready for read. We need to make sure this MemTable is
 also scanned while doing lookups.
+
+# Step 6: Compaction
+
+We only have level-0 SSTables right now. It has several issues:
+
+- They may have duplicated keys.
+- They have overlaps. While doing lookup, we need to scan all SSTables.
+
+In this step, we implement compaction. When the number of SSTables on
+level-0 exceeds a specified limit, a compaction starts. We first
+calculates the range of the SSTable triggering the compaction (i.e. min
+key to max key). Then we find all overlapping SSTables at level 0 and
+level 1. All overlapping level-0 & level-1 SSTables would be deleted.
+The KVs in these SSTables would be compacted (only keep the latest value
+for each key) and merged into new level-1 SSTables. After this is done,
+we check if level-1 has too many SSTables, and repeat the same step for
+level-1, level-2 ... until we handle all levels.
