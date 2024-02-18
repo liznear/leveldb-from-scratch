@@ -23,3 +23,8 @@ step, we focus on creating an SSTable from a sorted list of KVs. Since
 SSTables are stored as files, we need to assign a name to each SSTable.
 In this project, we assign a monotonic increasing `Gen` to each SSTable
 so that newer SSTables have higher `Gen`.
+
+# Step 3: Persist MemTable when it's full
+
+In this step, we convert a full MemTable into a SSTable using the
+function we implemented in step2. It is pretty straightforward.

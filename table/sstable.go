@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/liznear/leveldb-from-scratch/utils"
 )
@@ -13,12 +14,44 @@ import (
 // Use byte to save space.
 type Level byte
 
-// Gen represents of the generation of the SSTable. It is unique and monotonically increasing.
-// It is also used as the file name of SSTables.
-//
-// On level = 0, SSTables can have overlaps. If one key is in multiple SSTables, the one with the highest
-// Gen is the most recent one.
-type Gen int
+const sstableExtension = ".sstable"
+
+// SSTable is a reference to the actual SSTable file on disk.
+// It only includes the metadata of the SSTable.
+type sstable struct {
+	gen   Gen
+	level Level
+}
+
+// newSSTable creates a new SSTable file with the given kvs. It returns the SSTable
+// reference and the error.
+func newSSTable(gen Gen, level Level, kvs []kv) (*sstable, error) {
+	t := &sstable{
+		gen:   gen,
+		level: level,
+	}
+	filename := t.filename()
+	if _, err := os.Stat(filename); err == nil {
+		return nil, fmt.Errorf("sstable: file %s already exists", filename)
+	}
+	f, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("sstable: fail to open file %s: %w", t.filename(), err)
+	}
+	defer f.Close()
+	if err := write(f, t.level, kvs); err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+func (t *sstable) filename() string {
+	return fmt.Sprintf("%d%s", t.gen, sstableExtension)
+}
+
+func (t *sstable) load() (io.ReadSeekCloser, error) {
+	return os.Open(t.filename())
+}
 
 // write writes the given kvs to the writer as an SSTable. kvs must be already sorted by keys.
 //
