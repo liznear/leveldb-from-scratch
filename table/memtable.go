@@ -13,14 +13,17 @@ type MemTable struct {
 	// m protects data
 	m sync.RWMutex
 
-	data *treemap.Map[key, value]
+	data     *treemap.Map[key, value]
+	size     int
+	capacity int
 }
 
-func NewMemTable() *MemTable {
+func NewMemTable(capacity int) *MemTable {
 	return &MemTable{
 		data: treemap.NewWith[key, value](func(x, y key) int {
 			return strings.Compare(x.data, y.data)
 		}),
+		capacity: capacity,
 	}
 }
 
@@ -30,6 +33,7 @@ func (t *MemTable) put(key string, value []byte) {
 	defer t.m.Unlock()
 
 	t.data.Put(newKey(key), newValue(value))
+	t.size += 4 + len(key) + 4 + len(value)
 }
 
 // get returns the value associated with the key, and also a found boolean.
@@ -54,9 +58,13 @@ func (t *MemTable) remove(key string) {
 	t.data.Put(newKey(key), newDeletedValue())
 }
 
+func (t *MemTable) isFull() bool {
+	return t.size >= t.capacity
+}
+
 // persist persists the MemTable to an SSTable file with gen.
 func (t *MemTable) persist(gen Gen) (*sstable, error) {
-	// When we start persisting a MemTable, there shouldn't be any new
+	// When we start prevMem a MemTable, there shouldn't be any new
 	// modifications to this, so we don't acquire a lock.
 	iter := t.data.Iterator()
 	var kvs []kv
