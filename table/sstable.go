@@ -53,6 +53,52 @@ func (t *sstable) load() (io.ReadSeekCloser, error) {
 	return os.Open(t.filename())
 }
 
+func (t *sstable) kvs() ([]kv, error) {
+	r, err := t.load()
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+
+	_, err = r.Seek(-footerSize, io.SeekEnd)
+	if err != nil {
+		return nil, fmt.Errorf("sstable: fail to seek to the start of footer: %w", err)
+	}
+	f := footer{}
+	if err := f.read(r); err != nil {
+		return nil, fmt.Errorf("sstable: fail to read footer: %w", err)
+	}
+
+	_, err = r.Seek(0, io.SeekStart)
+	if err != nil {
+		return nil, fmt.Errorf("sstable: fail to seek to the start of data: %w", err)
+	}
+	return readKVs(io.LimitReader(r, int64(f.indexOffset)))
+}
+
+// get returns the value of the key if exists. If no value is found, ok would be false.
+//
+// Note that if a key is deleted, ok would still be true. The caller should check the value's
+// deleted field.
+//
+// TODO: it could be optimized
+//   - Since kvs are sorted, we can stop if the key is greater than the target key.
+//   - We haven't built the index or metadata
+//   - We haven't built the bloom filter
+//   - We can cache the data in memory
+func (t *sstable) get(key string) (v value, ok bool, err error) {
+	kvs, err := t.kvs()
+	if err != nil {
+		return value{}, false, fmt.Errorf("sstable: fail to read kvs: %w", err)
+	}
+	for _, kv := range kvs {
+		if kv.key.data == key {
+			return kv.value, true, nil
+		}
+	}
+	return value{}, false, nil
+}
+
 // write writes the given kvs to the writer as an SSTable. kvs must be already sorted by keys.
 //
 // # The SSTable on disk looks like this

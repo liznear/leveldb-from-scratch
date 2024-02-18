@@ -3,6 +3,7 @@ package table
 import (
 	"bytes"
 	"io"
+	"reflect"
 	"testing"
 )
 
@@ -38,5 +39,50 @@ func TestSSTable_Write(t *testing.T) {
 		if !kvEqual(&got[i], &kvs[i]) {
 			t.Errorf("%d: got %q, want %q", i, &got[i], &kvs[i])
 		}
+	}
+}
+
+func TestSSTable_Get(t *testing.T) {
+	t.Parallel()
+	clean := EnterTempDir(t)
+	defer clean()
+
+	kvs := []kv{
+		newKV("Key1", []byte("Value1")),
+		newDeletedKey("Key3"),
+	}
+	sstable, err := newSSTable(1, 0, kvs)
+	if err != nil {
+		t.Fatalf("Fail to create SSTable: %v", err)
+	}
+
+	got, ok, err := sstable.get("Key1")
+	if err != nil {
+		t.Fatalf("Fail to get Key1: %v", err)
+	}
+	if !ok {
+		t.Fatal("Fail to found Key1")
+	}
+	if !reflect.DeepEqual(got.data, []byte("Value1")) {
+		t.Errorf("Got %v, want %v", got, []byte("Value1"))
+	}
+
+	_, ok, err = sstable.get("Key2")
+	if err != nil {
+		t.Fatalf("Fail to get Key2: %v", err)
+	}
+	if ok {
+		t.Fatal("Found non-existing Key2")
+	}
+
+	got, ok, err = sstable.get("Key3")
+	if err != nil {
+		t.Fatalf("Fail to get Key3: %v", err)
+	}
+	if !ok {
+		t.Fatal("Fail to found deleted Key3")
+	}
+	if !got.deleted {
+		t.Errorf("Got %v, want deleted", got)
 	}
 }

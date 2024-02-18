@@ -28,3 +28,9 @@ so that newer SSTables have higher `Gen`.
 
 In this step, we convert a full MemTable into a SSTable using the
 function we implemented in step2. It is pretty straightforward.
+
+# Step 4: Read SSTable (without any fancy optimization)
+
+This step is a simple sequential scan of the SSTable. No fancy stuff
+like index, bloom filter, etc. It has already been done in tests of
+previous steps.
